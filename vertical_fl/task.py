@@ -11,12 +11,12 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 FEATURE_COLUMNS = [
     "HatchYear",
     "Type",
-    "HatchQuarter", # client 1
+    "HatchQuarter",
     "Thinning",
     "EndFlockSize",
-    "NumberOfHouses",  # client 2
+    "NumberOfHouses",
     "FarmAvgAbAfterWk1",
-    "VetAvgAbAfterWk1" # client 3
+    "VetAvgAbAfterWk1"
 ]
 
 def _bin_houses(NumberOfHouses_series):
@@ -102,7 +102,7 @@ fds = None  # Cache FederatedDataset
 def load_data(partition_id: int, feature_splits: list[int]):
     dataset = load_dataset(
         "csv",
-        data_files="C:/Users/4243692/flower-vfa-deployment/vertical-fl-own/data/train.csv",
+        data_files="vertical-fl/data/train.csv",
         split="train"
     )
 
@@ -178,3 +178,4 @@ def evaluate_head_model(
         specificity = (TN / (TN + FP))*100 if (TP + FN) > 0 else 0.0
 
     return accuracy, sensitivity, specificity
+
