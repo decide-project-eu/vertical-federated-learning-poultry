@@ -1,7 +1,12 @@
 # vertical-federated-learning-poultry
 Proof of concept of vertical federated learning using Dutch poultry database with antibiotics data.
 
-The approach is adapted from this tutorial: https://github.com/adap/flower/tree/main/examples/vertical-fl
+The approach is adapted from this tutorial, using the Message API: https://github.com/adap/flower/tree/main/examples/vertical-fl
+
+In this setup, two clients are simulated. They have data on the same broiler flocks, but each client holds different information (columns). A third party, the server, holds the labels, which in this case is whether or not flocks were treated with antibiotics after week 1. The server and client 2 could be the same data owner, holding information on antibiotic use, but in the current setup they are simulated as two separate data owners.
+
+For the vertical federated analysis to work, each data owner needs to have information on identical flocks, ordered in the same way. In the current setup, it is assumed that each data owner has a flock ID to achieve this. Data is also cleaned and filtered (free range and organic farms are removed) before clients are simulated.
+
 
 ## Set up the project
 
@@ -9,8 +14,8 @@ This project runs on python 3.11. Using higher versions of Python causes depende
 
 The project should have the following structure:
 ```
-vertical-fl-own
-├── vertical_fl_own
+vertical-fl
+├── vertical_fl
 │   ├── client_app.py   # Defines your ClientApp
 │   ├── server_app.py   # Defines your ServerApp
 │   └── task.py         # Defines your model, training and data loading
@@ -31,31 +36,6 @@ In the terminal, make sure that you are in the vertical-fl-own folder. Start the
 ```
 flwr run .
 ```
-The output is a summary, including prediction accuracy of each round.
-
-
-
-## Run with deployment
-To be able to run a project with deployment, the following should be in the pyproject.toml file:
-```
-[tool.flwr.federations.local-deployment]
-address = "127.0.0.1:9093"
-insecure = true
-```
-
-Open a terminal and create a superlink:
-```
-flower-superlink --insecure
-```
-Then, in a new terminal, create a supernode:
-```
-flower-supernode --insecure --superlink 127.0.0.1:9092 --clientappio-api-address 127.0.0.1:9094 --node-config "partition-id=0 num-partitions=3"
-```
-Create as many supernodes as the number of clients you have. This example project is based on 3 supernodes. Make sure you change the API address for each supernode (9094, 9095, 9096).
-Then, in a new terminal, run the project:
-```
-flwr run vertical-fl-own local-deployment --stream
-```
-
+The output is a summary, including prediction accuracy, sensitivity and specificity.
 
 
