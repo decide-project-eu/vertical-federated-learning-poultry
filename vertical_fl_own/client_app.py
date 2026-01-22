@@ -3,7 +3,7 @@ from flwr.common import Context
 from sklearn.preprocessing import StandardScaler
 import torch
 import torch.nn as nn
-
+#
 from vertical_fl_own.task import load_data   # If ClientModel is in Task, then also import here
 
 # This is the model that the client runs. Input = features of the data that one client has.
