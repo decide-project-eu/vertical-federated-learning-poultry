@@ -13,13 +13,12 @@ vertical-fl-own
 ├── vertical_fl_own
 │   ├── client_app.py   # Defines your ClientApp
 │   ├── server_app.py   # Defines your ServerApp
-│   ├── strategy.py     # Defines your Strategy
 │   └── task.py         # Defines your model, training and data loading
 ├── pyproject.toml      # Project metadata like dependencies and configs
 ├── data/train.csv
 └── README.md
 ```
-**Note: the data train.csv is not shared (yet).**
+**Note: the data train.csv is not shared.**
 
 Install the dependencies defined in pyproject.toml as well as the mlxexample package.
 ```

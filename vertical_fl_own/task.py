@@ -1,20 +1,23 @@
-from pathlib import Path
-from logging import WARN
-import torch.nn as nn
 import numpy as np
 import pandas as pd
+import torch
 import torch.nn as nn
-from flwr.common.logger import log
+from datasets import load_dataset
+#from flwr_datasets import FederatedDataset
+from flwr_datasets.partitioner import VerticalSizePartitioner
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from datasets import Dataset
-from flwr_datasets.partitioner import IidPartitioner
-
-NUM_VERTICAL_SPLITS = 3
-
-
-# this version: all columns are cleaned, Each farm and vet get an average antibiotic use (to approach random effect
-# in the original model)
-
+FEATURE_COLUMNS = [
+    "HatchYear",
+    "Type",
+    "HatchQuarter", # client 1
+    "Thinning",
+    "EndFlockSize",
+    "NumberOfHouses",  # client 2
+    "FarmAvgAbAfterWk1",
+    "VetAvgAbAfterWk1" # client 3
+]
 
 def _bin_houses(NumberOfHouses_series):
     bins = [-np.inf, 1.01, 2.01, 3.01, np.inf]
@@ -26,101 +29,152 @@ def _bin_houses(NumberOfHouses_series):
     )
 
 
-def _create_features(df):
-    # Convert 'number of houses' to numeric, coercing errors to NaN
-    df["NumberOfHouses"] = pd.to_numeric(df["NumberOfHouses"], errors="coerce")
-    df["NumberOfHouses"] = _bin_houses(df["NumberOfHouses"])
-    df.drop(columns=["FarmIdentification", "VetId"], inplace=True)   # I have no "Id" column now!
-    all_keywords = set(df.columns)
+def load_and_preprocess(
+    dataframe: pd.DataFrame,
+):
+    """Preprocess a subset of the dataset columns into a purely
+    numerical numpy array suitable for model training."""
 
-    # make dummy variables and standardize the rest of the columns
-    categorical_columns = ["NumberOfHouses", "HatchQuarter", "Type"]
-    other_columns = [col for col in df.columns if col not in categorical_columns
-                     and col != "AntibioticsAfterWeek1"]
+    # Make a copy to avoid modifying the original
+    X_df = dataframe.copy()
 
-    df = pd.get_dummies(df, columns=categorical_columns, drop_first=True)
-    df = df.astype({col: 'int' for col in df.columns if df[col].dtype == 'bool'})
-    df[other_columns] = (df[other_columns] - df[other_columns].mean()) / df[other_columns].std()
+    # Identify which columns are present
+    available_cols = set(X_df.columns)
 
-    return df, all_keywords
+    # ----------------------------------------------------------------------
+    # FEATURE ENGINEERING ON NAME (if present)
+    # ----------------------------------------------------------------------
+    if "NumberOfHouses" in available_cols:
+        X_df["NumberOfHouses"] = pd.to_numeric(X_df["NumberOfHouses"], errors="coerce")
+        X_df["NumberOfHouses"] = _bin_houses(X_df["NumberOfHouses"])
 
+    # ----------------------------------------------------------------------
+    # IDENTIFY NUMERIC + CATEGORICAL COLUMNS
+    # ----------------------------------------------------------------------
+    categorical_cols = []
+    if "NumberOfHouses" in X_df.columns:
+        categorical_cols.append("NumberOfHouses")
+    if "HatchQuarter" in X_df.columns:
+        categorical_cols.append("HatchQuarter")
+    if "Type" in X_df.columns:
+        categorical_cols.append("Type")
 
-def process_dataset():
+    numeric_cols = [c for c in X_df.columns if c not in categorical_cols]
 
-    df = pd.read_csv("C:/Users/4243692/flower-vfa-deployment/vertical-fl-own/data/train.csv")
-    processed_df = df.dropna().copy()
-    # Remove free range and organic
-    processed_df = processed_df[processed_df['Type'] != 'free range and organic']
-    return _create_features(processed_df)
+    # ----------------------------------------------------------------------
+    # HANDLE MISSING VALUES
+    # ----------------------------------------------------------------------
+    if numeric_cols:
+        X_df[numeric_cols] = X_df[numeric_cols].fillna(X_df[numeric_cols].median())
 
-
-def load_data(partition_id: int, num_partitions: int):
-    """Partition the data vertically and then horizontally.
-
-    We create three sets of features representing three types of nodes participating in
-    the federation.
-
-    [{'HatchYear', 'FarmIdentification', 'Type', 'VetId'}, {'Thinning', 'EndFlockSize', 'HatchQuarter', 'NumberOfHouses'}, {'AntibioticsAfterWeek1'}]
-
-    Once the whole dataset is split vertically and a set of features is selected based
-    on mod(partition_id, 3), it is split horizontally into `ceil(num_partitions/3)`
-    partitions. This function returns the partition with index `partition_id % 3`.
-    """
-
-    if num_partitions != NUM_VERTICAL_SPLITS:
-        log(
-            WARN,
-            "To run this example with num_partitions other than 3, you need to update how "
-            "the Vertical FL training is performed. This is because the shapes of the "
-            "gradients might not be the same along the first dimension.",
+    # ----------------------------------------------------------------------
+    # PREPROCESSOR (TRANSFORM TO PURE NUMERIC)
+    # ----------------------------------------------------------------------
+    transformers = []
+    if numeric_cols:
+        transformers.append(("num", StandardScaler(), numeric_cols))
+    if categorical_cols:
+        transformers.append(
+            (
+                "cat",
+                OneHotEncoder(handle_unknown="ignore", sparse_output=False),
+                categorical_cols,
+            )
         )
 
-    # Read whole dataset and process
-    processed_df, features_set = process_dataset()
+    preprocessor = ColumnTransformer(transformers=transformers)
 
-    # Vertical Split and select
-    v_partitions = _partition_data_vertically(processed_df, features_set)
-    v_split_id = np.mod(partition_id, NUM_VERTICAL_SPLITS)
-    v_partition = v_partitions[v_split_id]
+    # ----------------------------------------------------------------------
+    # FIT TRANSFORMER & CONVERT TO NUMPY
+    # ----------------------------------------------------------------------
+    X_full = preprocessor.fit_transform(X_df)
 
-    # Convert to HuggingFace dataset
-    dataset = Dataset.from_pandas(v_partition)
+    # Ensure output is always a dense numpy array
+    if hasattr(X_full, "toarray"):
+        X_full = X_full.toarray()
 
-    # Split horizontally with Flower Dataset partitioner
-    num_h_partitions = int(np.ceil(num_partitions / NUM_VERTICAL_SPLITS))
-    partitioner = IidPartitioner(num_partitions=num_h_partitions)
+    return X_full.astype(np.float32)
+
+
+fds = None  # Cache FederatedDataset
+
+
+def load_data(partition_id: int, feature_splits: list[int]):
+    dataset = load_dataset(
+        "csv",
+        data_files="C:/Users/4243692/flower-vfa-deployment/vertical-fl-own/data/train.csv",
+        split="train"
+    )
+
+    # remove free range and organic (BEFORE creating clients)
+    dataset = dataset.filter(
+        lambda x: x["Type"] != "free range and organic"
+    )
+
+    dataset = dataset.remove_columns(["FarmIdentification", "VetId"])
+
+    partitioner = VerticalSizePartitioner(
+        partition_sizes=feature_splits,
+        active_party_columns="AntibioticsAfterWeek1",
+        active_party_columns_mode="create_as_last",
+    )
+
     partitioner.dataset = dataset
 
-    # Extract partition of the `ClientApp` calling this function
-    partition = partitioner.load_partition(partition_id % num_h_partitions)
-    partition.remove_columns(["AntibioticsAfterWeek1"])
+    partition = partitioner.load_partition(partition_id)
 
-    return partition.to_pandas(), v_split_id
+    return load_and_preprocess(dataframe=partition.to_pandas())
 
 
-def _partition_data_vertically(df, all_keywords):
-    partitions = []
-    keywords_sets = [
-        {"HatchYear", "Type", "FarmAvgAbAfterWk1", "VetAvgAbAfterWk1"}, # client 1
-        {"Thinning", "EndFlockSize"},  # client 2
-        # the rest goes to client 3: "HatchQuarter", "NumberOfHouses"
-    ]
-    keywords_sets.append(all_keywords - keywords_sets[0] - keywords_sets[1])
+class ClientModel(nn.Module):
+    def __init__(self, input_size, out_feat_dim):
+        super().__init__()
+        self.fc1 = nn.Linear(input_size, 128)
+        self.fc2 = nn.Linear(128, out_feat_dim)
 
-    for keywords in keywords_sets:
-        partitions.append(
-            df[
-                list(
-                    {
-                        col
-                        for col in df.columns
-                        for kw in keywords
-                        if kw in col or "AntibioticsAfterWeek1" in col
-                    }
-                )
-            ]
-        )
-
-    return partitions
+    def forward(self, x):
+        x = self.fc1(x)
+        x = nn.functional.relu(x)
+        return self.fc2(x)
 
 
+class ServerModel(nn.Module):
+    def __init__(self, input_size):
+        super(ServerModel, self).__init__()
+        self.hidden = nn.Linear(input_size, 96)
+        self.fc = nn.Linear(96, 1)
+        self.bn = nn.BatchNorm1d(96)
+        #self.sigmoid = nn.Sigmoid()     # removed because I changed to BCEWithLogitsLoss
+
+    def forward(self, x):
+        x = self.hidden(x)
+        x = nn.functional.relu(x)
+        x = self.bn(x)
+        x = self.fc(x)
+        #return self.sigmoid(x)
+        return x
+
+
+def evaluate_head_model(
+    head: ServerModel, embeddings: torch.Tensor, labels: torch.Tensor
+) -> float:
+    """Compute accuracy of head."""
+    head.eval()
+    with torch.no_grad():
+        correct = 0
+        # Re-compute embeddings for accuracy (detached from grad)
+        embeddings_eval = embeddings.detach()
+        output = head(embeddings_eval)
+        probs = torch.sigmoid(output)       # only if not using sigmoid function in forward pass
+        predicted = (probs > 0.5).float()
+        correct += (predicted == labels).sum().item()
+        accuracy = correct / len(labels) * 100
+
+        TP = ((predicted == 1) & (labels == 1)).sum().item()
+        FN = ((predicted == 0) & (labels == 1)).sum().item()
+        FP = ((predicted == 1) & (labels == 0)).sum().item()
+        TN = ((predicted == 0) & (labels == 0)).sum().item()
+        sensitivity = (TP / (TP + FN))*100 if (TP + FN) > 0 else 0.0
+        specificity = (TN / (TN + FP))*100 if (TP + FN) > 0 else 0.0
+
+    return accuracy, sensitivity, specificity
