@@ -6,7 +6,7 @@ from flwr.app import Array, ArrayRecord, Context, Message, RecordDict
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
 
-from vertical_fl_own.task import FEATURE_COLUMNS, ServerModel, evaluate_head_model
+from vertical_fl.task import FEATURE_COLUMNS, ServerModel, evaluate_head_model
 
 # Create ServerApp
 app = ServerApp()
@@ -31,7 +31,7 @@ def main(grid: Grid, context: Context) -> None:
     # Get dataset
     dataset = load_dataset(
         "csv",
-        data_files="C:/Users/4243692/flower-vfa-deployment/vertical-fl-own/data/train.csv",
+        data_files="vertical-fl/data/train.csv",
         split="train"
     )
     labels = dataset["AntibioticsAfterWeek1"]
@@ -174,3 +174,4 @@ def get_remote_embeddings(
             embeddings[:, pos * embedding_dim : (pos + 1) * embedding_dim] = embd
 
     return embeddings.requires_grad_(), node_pos_mapping
+
