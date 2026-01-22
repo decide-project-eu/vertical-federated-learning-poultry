@@ -4,7 +4,7 @@ import torch
 from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, RecordDict
 from flwr.clientapp import ClientApp
 
-from vertical_fl_own.task import ClientModel, load_data
+from vertical_fl.task import ClientModel, load_data
 
 # Flower ClientApp
 app = ClientApp()
@@ -89,3 +89,4 @@ def apply_grad(msg: Message, context: Context):
 
     # Construct and return reply Message
     return Message(content=RecordDict(), reply_to=msg)
+
