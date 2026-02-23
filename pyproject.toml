@@ -27,12 +27,15 @@ serverapp = "vertical_fl_own.server_app:app"
 clientapp = "vertical_fl_own.client_app:app"
 
 [tool.flwr.app.config]
-num-server-rounds = 250
+num-server-rounds = 1000
 learning-rate = 0.01
 out-feature-dim-clientapp = 64 # Output feature dimension for client app
 # ["HatchYear","Type","HatchQuarter","FarmAvgAbAfterWk1","VetAvgAbAfterWk1","Thinning","EndFlockSize","NumberOfHouses"]
 feature-splits = "5,3" # Comma-separated number of features per client (they must add up to 8)
                          # And there must be as many entries as num-supernodes configured below
+
+early-stopping-patience = 10
+early-stopping-min-delta = 0.0001
 
 [tool.flwr.federations]
 default = "local-simulation"
